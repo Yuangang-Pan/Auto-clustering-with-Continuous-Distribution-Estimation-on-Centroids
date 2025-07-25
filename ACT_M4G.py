@@ -1,13 +1,10 @@
 import math
 import torch
-import torch.autograd as autograd
-import torch.optim as optim
 import numpy as np
 from numpy import *
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap
 import seaborn as sns
 import matplotlib.patheffects as PathEffects
 from sklearn import mixture
@@ -15,14 +12,18 @@ from sklearn.neighbors import KernelDensity
 import time
 ## add path
 import sys
+import psutil
+import os
 
-path = '/SVGD/'
-file = '/M4G/'
+add = ''
+path = add + '/SVGD/'
+file = add + '/Results/Ablation_M4G/'
 sys.path.append(path)
+
 import SVGD as Stein
 
 flag_cuda = torch.cuda.is_available()
-SEED = 2025
+SEED = 2022
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 torch.cuda.manual_seed_all(SEED)
@@ -109,7 +110,7 @@ def measure(y_true, y_pred):
 
     y_true = y_true.astype(np.int64)
     assert y_pred.size == y_true.size
-    D = max(y_pred.max(), y_true.max()) + 1
+    D = max([y_pred.max(), y_true.max()]) + 1
     w = np.zeros((D, D), dtype=np.int64)
     for i in range(y_pred.size):
         w[y_pred[i], y_true[i]] += 1
@@ -213,9 +214,9 @@ def dp_means_fast(data, Lambda, max_iters=100, tolerance=10e-3):
 
 ### code start from here
 Vanila_data_generation = '' ## Whether to regenerate data. To ensure consistency, I have already saved all the data.
-visualization = 'True'  ## Whether to visualize, mainly to observe the data distribution
+visualization = ''  ## Whether to visualize, mainly to observe the data distribution
 data_type = 'skrinage' ## Our data generation type
-PA = 10 ## Data amplification factor
+PA = 1000 ## Data amplification factor
 data_name = file + 'M4G_data_{}'.format(PA) ## Each dataset uses the amplification factor as a suffix
 
 if Vanila_data_generation:
@@ -246,8 +247,9 @@ print('data size: ', data.shape, labels.shape)
 fig = plt.figure(figsize=(10, 2))
 ## We have 5 nonparametric methods, execute one each time
 Baseline = ['DP-GMM', 'DP-means', 'HAC', 'DBSCAN', 'ACT']
-method = Baseline[1]
-
+method = Baseline[4]
+print('method:', method)
+memory_usage = []
 """
 Plot the Data density via the KDE
 """
@@ -276,13 +278,27 @@ if method == 'DP-GMM':
     """
     start = time.perf_counter()
     dpgmm = mixture.BayesianGaussianMixture(n_components=50, covariance_type="full", max_iter=1000, random_state=2022).fit(data)
+    process = psutil.Process(os.getpid())
+    current_process_memory = process.memory_info().rss 
+    allocated_memory = current_process_memory / (1024 ** 2)
+    memory_usage.append(allocated_memory)
+    print(f"DP-GMM - Allocated fitting Memory: {allocated_memory:.2f} MB")
+
     y_preds = dpgmm.predict(data)
+    process = psutil.Process(os.getpid())
+    current_process_memory = process.memory_info().rss 
+    allocated_memory = current_process_memory / (1024 ** 2)
+    memory_usage.append(allocated_memory)
+    print(f"DP-GMM - Allocated predeication Memory: {allocated_memory:.2f} MB")
+
     end = time.perf_counter()
     mu = dpgmm.means_
+    n_components = dpgmm.n_components
     acc, nmi, ari = measure(labels, y_preds)
-    pi = [np.sum(y_preds==i)/y_preds.shape[0] for i in range(y_preds.shape[0]+1)]
-
-    num_cluster = np.sum(np.array(pi) > 0.001)
+    
+    pi = [np.sum(y_preds==i)/y_preds.shape[0] for i in range(n_components)]
+    idx = np.array(pi) > 0.001
+    num_cluster = np.sum(idx)
     print('DP-GMM #cluster: {}'.format(num_cluster)) 
     print('Time:{:.4f} \tACC:{:.4f} \tNMI:{:.4f} \tARI:{:.4f}'.format(end-start, acc, nmi, ari))
     
@@ -295,7 +311,7 @@ if method == 'DP-GMM':
     ax.scatter(data[:, 0], data[:, 1], s=1, alpha=1, marker='.', c=palette[y_preds])
     size = 100 * np.array(pi)
     print(size.shape, mu.shape)
-    ax.scatter(mu[:, 0], mu[:, 1], s=size, alpha=1, marker='*', c=center_color)
+    ax.scatter(mu[idx, 0], mu[idx, 1], s=size[idx], alpha=1, marker='*', c=center_color)
     fig.tight_layout()
     name = file + '{}_k{}.png'.format('DP-GMM', num_cluster) 
     plt.savefig(name, bbox_inches='tight')
@@ -306,13 +322,26 @@ elif method == 'DP-means':
     """
     start = time.perf_counter()
     results = dp_means_fast(data, 50)
+    process = psutil.Process(os.getpid())
+    current_process_memory = process.memory_info().rss 
+    allocated_memory = current_process_memory / (1024 ** 2)
+    memory_usage.append(allocated_memory)
+    print(f"DP-means - Allocated fitting Memory: {allocated_memory:.2f} MB")
+
     y_preds = results['assignments']
+    process = psutil.Process(os.getpid())
+    current_process_memory = process.memory_info().rss 
+    allocated_memory = current_process_memory / (1024 ** 2)
+    memory_usage.append(allocated_memory)
+    print(f"DP-means - Allocated predeication Memory: {allocated_memory:.2f} MB")
+
     end = time.perf_counter()
     mu = results['centers']
     acc, nmi, ari = measure(labels, y_preds)
     pi = [np.sum(y_preds==i)/y_preds.shape[0] for i in range(y_preds.max()+1)]
     
     num_cluster = np.sum(np.array(pi) > 0.001)
+    pi = np.array(pi)[np.array(pi) > 0.001]
     print('DP-means #cluster: {}'.format(num_cluster)) 
     print('Time:{:.4f} \tACC:{:.4f} \tNMI:{:.4f} \tARI:{:.4f}'.format(end-start, acc, nmi, ari))
     
@@ -336,6 +365,12 @@ elif method == 'HAC':
     from sklearn.cluster import AgglomerativeClustering
     start = time.perf_counter()
     ac = AgglomerativeClustering(n_clusters=None, distance_threshold=60).fit(data)
+    process = psutil.Process(os.getpid())
+    current_process_memory = process.memory_info().rss 
+    allocated_memory = current_process_memory / (1024 ** 2)
+    memory_usage.append(allocated_memory)
+    print(f"HAC - Allocated inference Memory: {allocated_memory:.2f} MB")
+
     end = time.perf_counter()
     y_preds = ac.labels_
     acc, nmi, ari = measure(labels, y_preds)
@@ -366,6 +401,12 @@ elif method == 'DBSCAN':
     start = time.perf_counter()
     norm_data = StandardScaler().fit_transform(data)
     db = DBSCAN(eps=0.2, min_samples=15).fit(norm_data) # min_samples=12-15
+    process = psutil.Process(os.getpid())
+    current_process_memory = process.memory_info().rss 
+    allocated_memory = current_process_memory / (1024 ** 2)
+    memory_usage.append(allocated_memory)
+    print(f"DBSCAN - Allocated inference Memory: {allocated_memory:.2f} MB")
+
     end = time.perf_counter()
     core_samples_mask = np.zeros_like(db.labels_, dtype=bool)
     core_samples_mask[db.core_sample_indices_] = True
@@ -395,25 +436,38 @@ else:
     """
     Our ACT
     """
+    device = 0
+    import pynvml
+    pynvml.nvmlInit()
+    handle = pynvml.nvmlDeviceGetHandleByIndex(device)
+
+    from sklearn.mixture import GaussianMixture
+    if flag_cuda:
+        data = torch.tensor(data, dtype=torch.float).cuda(device)
+        labels = torch.from_numpy(labels).cuda(device)
+    # ## for fiting 50 centroids
     
     num = 50
     dim = 2
     Gap = 10
-    # Recommend using the GMM cluster mean to initialize particles
-    # from sklearn.mixture import GaussianMixture
-    # if flag_cuda:
-    #     data = torch.tensor(data, dtype=torch.float).cuda()
-    #     labels = torch.from_numpy(labels).cuda()
-    # gmm = GaussianMixture(n_components=num, covariance_type='spherical', random_state=SEED).fit(data.cpu().numpy())
-    # mu = torch.tensor(gmm.means_, dtype=torch.float).to(data.device)
+    
+    gmm = GaussianMixture(n_components=num, covariance_type='spherical', random_state=SEED).fit(data.cpu().numpy())
+    mu = torch.tensor(gmm.means_, dtype=torch.float).to(device)
     
     start = time.perf_counter()
-    svgd = Stein.SVGD(flag_cuda, num, dim, mu_ini=None)
+    svgd = Stein.SVGD(flag_cuda, num, dim, mu_ini=mu)
     mu0 = svgd.mu.cpu().numpy()
     Step = 0
+    
     for iter in range(1000):
         if iter <= 200:
             svgd.cluster_step(iter, data)
+
+            # allocated_memory = torch.cuda.memory_allocated(data.device) / (1024 ** 2)
+            
+            free, total = torch.cuda.mem_get_info(device) 
+            allocated_memory = (total - free) / (1024 ** 2)
+    
             if iter == 200:
                 mu_SVGD = svgd.mu.cpu().numpy()
         else:
@@ -426,8 +480,14 @@ else:
                     Step = 0
                 else: 
                     Step = Step + Gap
+
+            # allocated_memory = torch.cuda.memory_allocated(data.device) / (1024 ** 2)
+            free, total = torch.cuda.mem_get_info(device) 
+            allocated_memory = (total - free) / (1024 ** 2)
         if Step >=100:
             break
+        memory_usage.append(allocated_memory)
+        print(f"Iter {iter+1} - : {allocated_memory:.2f} MB")
     end = time.perf_counter()
     Dist = torch.unsqueeze(data, 1) - svgd.mu  # n x c x d
     z_dist = torch.sum(torch.mul(Dist, Dist), 2)  
@@ -440,3 +500,6 @@ else:
     acc, nmi, ari = measure(labels, y_preds)
     print('ACT #cluster: {}'.format(y_preds.max()+1)) 
     print('Time:{:.4f} \tACC:{:.4f} \tNMI:{:.4f} \tARI:{:.4f}'.format(end-start, acc, nmi, ari))
+np.save(data_name + '_' + method + '_memory.npy', np.array(memory_usage))
+
+    
