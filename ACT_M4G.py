@@ -216,7 +216,7 @@ def dp_means_fast(data, Lambda, max_iters=100, tolerance=10e-3):
 Vanila_data_generation = '' ## Whether to regenerate data. To ensure consistency, I have already saved all the data.
 visualization = ''  ## Whether to visualize, mainly to observe the data distribution
 data_type = 'skrinage' ## Our data generation type
-PA = 1000 ## Data amplification factor
+PA = 100 ## Data amplification factor
 data_name = file + 'M4G_data_{}'.format(PA) ## Each dataset uses the amplification factor as a suffix
 
 if Vanila_data_generation:
